@@ -18,25 +18,3 @@ def get_camera_frame() -> tuple[bool, np.ndarray]:
         _capture = cv2.VideoCapture(cfg.VIDEO_CAPTURE_DEVICE)
 
     return _capture.read()
-
-
-def show_live_preview():
-    """
-    Opens a window and displays the camera stream
-    """
-
-    try:
-        while True:
-
-            active, frame = get_camera_frame()
-
-            if not active:
-                print(f"\033[91m[ERROR] NO FRAME WAS PASSED. Is the camera connected and running?\033[0m"f"")
-                break
-
-            cv2.imshow("Live Preview, press q to quit", frame)
-            if cv2.waitKey(1) == ord('q'):
-                break
-    finally:
-        cv2.destroyAllWindows()
-
