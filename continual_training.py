@@ -2,30 +2,40 @@ import cv2
 import torch
 import tkinter as tk
 from tkinter import simpledialog
+import threading
+import queue
 import segment
 import utils
 
 # auto-tune cudnn to improve performance
 torch.backends.cudnn.benchmark = True
 
-tk_root = tk.Tk()
-tk_root.withdraw()
+class_request_queue = queue.Queue()
+class_result_queue = queue.Queue()
 
 selected_point = None
 selected_class = None
 class_selected = True
+waiting_for_class = False
 show_mask = True
 show_box = True
 
-def ask_class_name(prompt="Assign class to selected object:"):
+
+def tkinter_worker():
     """
-    Zeigt ein kleines Eingabefenster für den Klassennamen an.
-    :param prompt: Text im Dialogfenster
-    :return: eingegebener String, oder None, falls abgebrochen
+    Waits for class request, then takes class name from user.
+    This function runs in its own thread to not interrupt the main function.
     """
-    tk_root.attributes("-topmost", True)  # Dialog vor das OpenCV-Fenster bringen
-    result = simpledialog.askstring("Klasse", prompt, parent=tk_root)
-    return result
+    root = tk.Tk()
+    root.withdraw()
+
+    while True:
+        prompt = class_request_queue.get()
+        if prompt is None:
+            continue
+        root.attributes("-topmost", True)
+        result = simpledialog.askstring("", prompt, parent=root)
+        class_result_queue.put(result)
 
 
 def on_mouse_click(event, x, y, *_):
@@ -51,6 +61,8 @@ if __name__ == "__main__":
     cv2.namedWindow(window_name)
     cv2.setMouseCallback(window_name, on_mouse_click)
 
+    threading.Thread(target=tkinter_worker, daemon=True).start()
+
     with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
         try:
             while True:
@@ -74,9 +86,17 @@ if __name__ == "__main__":
                 elif key == ord('b'):
                     show_box = not show_box
 
-                if not class_selected:
-                    selected_class = ask_class_name()
-                    class_selected = True
+                if not class_selected and not waiting_for_class:
+                    class_request_queue.put("Assign class to selected object:")
+                    waiting_for_class = True
+
+                if waiting_for_class:
+                    try:
+                        selected_class = class_result_queue.get_nowait()  # non-blocking check
+                        class_selected = True
+                        waiting_for_class = False
+                    except queue.Empty:
+                        pass  # Antwort noch nicht da -> Loop läuft einfach normal weiter
 
         finally:
             cv2.destroyAllWindows()
