@@ -6,6 +6,7 @@ import threading
 import queue
 import segment
 import utils
+import model
 
 # auto-tune cudnn to improve performance
 torch.backends.cudnn.benchmark = True
@@ -56,7 +57,7 @@ def on_mouse_click(event, x, y, *_):
 
 if __name__ == "__main__":
 
-    window_name = "Live Preview, press Q to quit, press M to toggle mask, press B to toggle box"
+    window_name = "Live Preview, press Q to quit, press M to toggle mask, press B to toggle box, press S to save sample"
     cv2.startWindowThread()
     cv2.namedWindow(window_name)
     cv2.setMouseCallback(window_name, on_mouse_click)
@@ -85,6 +86,8 @@ if __name__ == "__main__":
                     show_mask = not show_mask
                 elif key == ord('b'):
                     show_box = not show_box
+                elif key == ord("s"):
+                    model.save_yolo_sample(frame, selected_class, mask)
 
                 if not class_selected and not waiting_for_class:
                     class_request_queue.put("Assign class to selected object:")
@@ -92,11 +95,11 @@ if __name__ == "__main__":
 
                 if waiting_for_class:
                     try:
-                        selected_class = class_result_queue.get_nowait()  # non-blocking check
+                        selected_class = class_result_queue.get_nowait()
                         class_selected = True
                         waiting_for_class = False
                     except queue.Empty:
-                        pass  # Antwort noch nicht da -> Loop läuft einfach normal weiter
+                        pass
 
         finally:
             cv2.destroyAllWindows()
