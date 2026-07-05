@@ -6,7 +6,7 @@ import threading
 import queue
 import segment
 import utils
-import model
+from model import YOLOTrainer
 
 # auto-tune cudnn to improve performance
 torch.backends.cudnn.benchmark = True
@@ -64,6 +64,9 @@ if __name__ == "__main__":
 
     threading.Thread(target=tkinter_worker, daemon=True).start()
 
+    trainer = YOLOTrainer()
+    trainer.start()
+
     with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
         try:
             while True:
@@ -87,7 +90,7 @@ if __name__ == "__main__":
                 elif key == ord('b'):
                     show_box = not show_box
                 elif key == ord("s"):
-                    model.save_yolo_sample(frame, selected_class, mask)
+                    trainer.save_yolo_sample(frame, selected_class, mask)
 
                 if not class_selected and not waiting_for_class:
                     class_request_queue.put("Assign class to selected object:")
