@@ -3,11 +3,13 @@ import numpy as np
 import queue
 import segment
 import threading
+import time
 import torch
 from collections import defaultdict
 from itertools import count
 from numpy_ringbuffer import RingBuffer
 from torch import nn
+from types import SimpleNamespace
 from typing import cast
 from ultralytics import YOLO
 from ultralytics.nn import DetectionModel
@@ -27,12 +29,37 @@ class Sample:
         self.box_height = box_height
 
 
+class LatestValue:
+    """
+    Saves the most recent set values. Values are deleted after accessing.
+    """
+    def __init__(self):
+        self.values: SimpleNamespace | None = None
+        self.lock = threading.Lock()
+
+    def set(self, **kwargs):
+        with self.lock:
+            self.values = SimpleNamespace(**kwargs)
+
+    def get(self):
+        with self.lock:
+            values = self.values
+            self.values = None
+            return values
+
+
 class YOLOTrainer:
 
     def __init__(self):
 
-        # toggles training mode (may be renamed in later revisions)
+        # stops thread if False
         self.active = True
+        # toggles training mode
+        self.training = True
+
+        # latest frame for prediction input (no queue is used to avoid an overflow due to lagging)
+        self.frame = LatestValue()
+        self.predicted_frame = LatestValue()
 
         self.classes = defaultdict(count().__next__)
         # temporarily saves samples to create training batches
@@ -70,7 +97,7 @@ class YOLOTrainer:
 
         self.criterion = v8DetectionLoss(self.det_model)
 
-        self.thread = threading.Thread(target=self.wait_for_samples, daemon=True)
+        self.thread = threading.Thread(target=self.run, daemon=True)
         # when called, asserts that only one thread can use the model (mutex)
         self.lock = threading.Lock()
 
@@ -79,7 +106,6 @@ class YOLOTrainer:
         """
         Starts the trainer in training mode.
         """
-        self.active = True
         self.thread.start()
 
 
@@ -88,23 +114,153 @@ class YOLOTrainer:
         Stops the thread.
         """
         self.active = False
-        self.thread.join(timeout=2)
+        self.thread.join()
+        return True
 
 
-    def wait_for_samples(self):
+    def train_mode(self):
         """
+        Sets mode to train
+        """
+        self.training = True
+
+
+    def predict_mode(self):
+        """
+        Sets mode to predict
+        """
+        self.training = False
+
+
+    def run(self):
+        """
+        Toggles train and predict modes.
+        When in train mode:
         Awaits samples in sample_queue. Samples must be objects of Sample.
+        When in predict mode:
+        Tries to predict objects in frame.
         """
-        self.det_model.train()
-        print("[INFO] PROGRAM RUNS IN TRAINING MODE")
-        while self.active:
-            try:
-                sample: Sample = self.sample_queue.get()
-            except queue.Empty:
-                continue
 
-            self.train_on_sample(sample)
-            print(f"[QUEUE] {self.sample_queue.qsize()} samples in queue")
+        while self.active:
+            if self.training:
+                self.load()
+                self.det_model.train()
+                print("[INFO] PROGRAM RUNS IN TRAINING MODE")
+                while self.training and self.active:
+
+                    try:
+                        sample: Sample = self.sample_queue.get(timeout=0.5)
+                    except queue.Empty:
+                        continue
+
+                    self.train_on_sample(sample)
+                    print(f"[QUEUE] {self.sample_queue.qsize()} samples in queue")
+
+            elif not self.training:
+                self.save()
+                self.det_model.eval()
+                print("[INFO] PROGRAM RUNS IN PREDICTION MODE")
+                while not self.training and self.active:
+                    self.predict_one()
+                    time.sleep(0.01)
+
+        self.save()
+
+
+    def predict_one(self):
+        """
+        Predicts the safest prediction in the frame. (Cannot predict more than one object)
+        Uses self.frame as input and self.predicted_frame as output.
+        """
+        frame = self.frame.get()
+        if frame is None:
+            return
+
+        frame = frame.frame
+        # convert numpy array to tensor
+        img = torch.from_numpy(frame).permute(2, 0, 1).float().div(255.0).unsqueeze(0).to(cfg.DEVICE)
+
+        with self.lock, torch.no_grad():
+            raw_predictions = self.det_model(img)[0]
+
+        predictions = raw_predictions.squeeze(0)
+        boxes, class_scores = predictions[:4], predictions[4:]
+
+        # pick the single anchor point with the highest confidence across all classes
+        best_idx = class_scores.amax(dim=0).argmax()
+
+        cx, cy, w, h = boxes[:, best_idx].tolist()
+        # probabilities for all classes
+        scores = class_scores[:, best_idx].tolist()
+
+        self.predicted_frame.set(
+            frame=frame,
+            x_center=cx / cfg.FRAME_WIDTH,
+            y_center=cy / cfg.FRAME_HEIGHT,
+            box_width=w / cfg.FRAME_WIDTH,
+            box_height=h / cfg.FRAME_HEIGHT,
+            class_scores=scores,
+        )
+
+
+    def save(self):
+        """
+        Saves the current model state to a .pt file: weights, class count,
+        and the name->id mapping needed to restore self.classes on load.
+        """
+        print("[INFO] SAVING MODEL...")
+
+        detect = cast(Detect, cast(object, self.det_model.model[-1]))
+        torch.save({
+            "model_state_dict": self.det_model.state_dict(),
+            "yaml": self.det_model.yaml,
+            "nc": detect.nc,
+            "classes": dict(self.classes),
+        }, cfg.CONTINUAL_MODEL)
+
+        print(f"[INFO] MODEL WAS SAVED to {cfg.CONTINUAL_MODEL}")
+
+
+    def load(self):
+        """
+        Restores model weights and self.classes from a checkpoint saved by save().
+        Rebuilds the class name->id counter so it continues from the correct
+        next id, rather than restarting at 0.
+        """
+        try:
+            checkpoint = torch.load(cfg.CONTINUAL_MODEL, map_location=cfg.DEVICE)
+
+        except FileNotFoundError:
+            print("[INFO] NO MODEL FOUND")
+            return
+
+        # build model for number of classes
+        nc = checkpoint["nc"]
+        self.det_model = DetectionModel(cfg=checkpoint["yaml"], nc=nc, verbose=False).to(cfg.DEVICE)
+        self.det_model.load_state_dict(checkpoint["model_state_dict"])
+        self.model.model = self.det_model
+
+        # set default arguments
+        merged = {**DEFAULT_CFG_DICT}
+        self.det_model.args = IterableSimpleNamespace(**merged)
+
+        # set class names
+        saved_classes = checkpoint["classes"]
+        self.classes = defaultdict(count(len(saved_classes)).__next__)
+        self.classes.update(saved_classes)
+        self.det_model.names = {class_id: name for name, class_id in self.classes.items()}
+
+        # freeze all but the last layer
+        self.det_model.requires_grad_(False)
+        detect = cast(Detect, cast(object, self.det_model.model[-1]))
+        detect.cv3.requires_grad_(True)
+
+        # initialize optimizer and criterion
+        trainable = filter(lambda p: p.requires_grad, self.det_model.parameters())
+        self.optimizer = torch.optim.AdamW(trainable, lr=cfg.LEARNING_RATE)
+        self.criterion = v8DetectionLoss(self.det_model)
+
+        print(f"[INFO] EXISTING MODEL WAS LOADED ({nc} classes)")
 
 
     def train_on_sample(self, sample: Sample):
@@ -215,7 +371,6 @@ class YOLOTrainer:
         :param mask: the matching SAM2 output for the frame
         """
         try:
-            mask = (mask > 0.0).squeeze().detach().cpu().numpy()
             bounding_box = segment.calculate_bounding_box(frame, mask)
             x_center, y_center, box_width, box_height = bounding_box
 
@@ -227,6 +382,10 @@ class YOLOTrainer:
 
         self.sample_queue.put(sample)
         print(f"[QUEUE] {self.sample_queue.qsize()} samples in queue")
+
+
+    def set_frame(self, frame):
+        self.frame.set(frame=frame)
 
 
 def build_batch(samples):

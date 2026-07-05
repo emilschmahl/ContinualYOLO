@@ -63,6 +63,8 @@ def calculate_bounding_box(frame, mask):
     :return: tuple(x_center, y_center, width, height)
     """
 
+    mask = (mask > 0.0).squeeze().detach().cpu().numpy()
+
     height, width = frame.shape[:2]
 
     # collapse mask into 1D projections, true if any pixel in row/ col is part of the mask
@@ -83,24 +85,21 @@ def calculate_bounding_box(frame, mask):
     return bounding_box
 
 
-def overlay_box(frame, mask, color=(0,255,0), thickness=2):
+def overlay_box(frame, bounding_box, color=(0,255,0), thickness=2):
     """
     Combines frame and bounding box to visualize the segmented area.
     :param frame: np.nparray containing the current frame
-    :param mask: the matching SAM2 output
+    :param bounding_box: bounding box with values [0:1]
     :param color: RGB value of the bounding box (green by default)
     :param thickness: bounding box thickness
     :return: a copy of the frame with bounding box
     """
 
-    mask = (mask > 0.0).squeeze().detach().cpu().numpy()
-
     overlay = frame.copy()
-    bounding_box = calculate_bounding_box(frame, mask)
     if bounding_box is None:
         return overlay
 
-    height, width = mask.shape[:2]
+    height, width = frame.shape[:2]
     x_center, y_center, box_width, box_height = bounding_box
     # calculate absolute values
     x_center, box_width = x_center * width, box_width * width

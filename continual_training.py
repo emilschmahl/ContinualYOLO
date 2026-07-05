@@ -75,34 +75,61 @@ if __name__ == "__main__":
                     print(f"\033[91m[ERROR] NO FRAME WAS PASSED. Is the camera connected and running?\033[0m"f"")
                     break
 
-                mask, selected_point = segment.get_mask(frame, selected_point)
+                if trainer.training:
+                    mask, selected_point = segment.get_mask(frame, selected_point)
 
-                masked_frame = segment.overlay_mask(frame, mask) if (mask is not None and show_mask) else frame
-                boxed_frame = segment.overlay_box(masked_frame, mask) if (mask is not None and show_box) else masked_frame
+                    masked_frame = segment.overlay_mask(frame, mask) if (mask is not None and show_mask) else frame
+                    boxed_frame = segment.overlay_box(masked_frame, segment.calculate_bounding_box(frame, mask)) if (mask is not None and show_box) else masked_frame
 
-                cv2.imshow(window_name, boxed_frame)
+                    cv2.imshow(window_name, boxed_frame)
 
-                key = cv2.waitKey(1)
-                if key == ord('q'):
-                    break
-                elif key == ord('m'):
-                    show_mask = not show_mask
-                elif key == ord('b'):
-                    show_box = not show_box
-                elif key == ord("s"):
-                    trainer.save_yolo_sample(frame, selected_class, mask)
+                    key = cv2.waitKey(1)
+                    if key == ord('q'):
+                        trainer.stop()
+                        break
+                    elif key == ord('m'):
+                        show_mask = not show_mask
+                    elif key == ord('b'):
+                        show_box = not show_box
+                    elif key == ord("s"):
+                        trainer.save_yolo_sample(frame, selected_class, mask)
+                    elif key == ord("e"):
+                        trainer.training = not trainer.training
 
-                if not class_selected and not waiting_for_class:
-                    class_request_queue.put("Assign class to selected object:")
-                    waiting_for_class = True
+                    if not class_selected and not waiting_for_class:
+                        class_request_queue.put("Assign class to selected object:")
+                        waiting_for_class = True
 
-                if waiting_for_class:
-                    try:
-                        selected_class = class_result_queue.get_nowait()
-                        class_selected = True
-                        waiting_for_class = False
-                    except queue.Empty:
-                        pass
+                    if waiting_for_class:
+                        try:
+                            selected_class = class_result_queue.get_nowait()
+                            class_selected = True
+                            waiting_for_class = False
+                        except queue.Empty:
+                            pass
+
+                else:
+                    trainer.set_frame(frame)
+                    prediction = trainer.predicted_frame.get()
+                    if prediction is not None:
+                        masked_frame = segment.overlay_box(prediction.frame, (
+                            prediction.x_center,
+                            prediction.y_center,
+                            prediction.box_width,
+                            prediction.box_height
+                        ))
+
+                        cv2.imshow(window_name, masked_frame)
+                    else:
+                        cv2.imshow(window_name, frame)
+
+                    key = cv2.waitKey(1)
+                    if key == ord('q'):
+                        trainer.stop()
+                        break
+                    elif key == ord("e"):
+                        trainer.training = not trainer.training
+
 
         finally:
             cv2.destroyAllWindows()
