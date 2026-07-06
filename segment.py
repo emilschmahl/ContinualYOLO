@@ -1,24 +1,17 @@
 import numpy as np
-import config as cfg
-from sam2.build_sam import build_sam2_camera_predictor
 
-# create a pre-trained instance of SAM2
-predictor = build_sam2_camera_predictor(cfg.MODEL_CONFIG, cfg.SAM2_CHECKPOINT)
-init = False
 
-def get_mask(frame, selected_point):
+def get_mask(predictor, frame: np.ndarray, selected_point: tuple[float, float] | None) -> np.ndarray:
     """
     Predict mask for frame and selected point.
     Set selected point to None.
+    :param predictor: SAM2 model
     :param selected_point: tuple(x, y)
     :param frame: np.nparray containing the current frame
-    :return: SAM2 mask, selected point
+    :return: SAM2 mask
     """
-    global init
 
-    # return None if no object is tracked
-    mask = None
-    #start tracking the object
+    #start tracking the object at the selected point
     if selected_point is not None:
         predictor.load_first_frame(frame)
         _, _, mask = predictor.add_new_prompt(
@@ -27,16 +20,24 @@ def get_mask(frame, selected_point):
             points=np.array([selected_point], dtype=np.float32),
             labels=np.array([1]),
         )
-        init = True
 
-    # track the object if already initialized
-    elif init:
+    # track the object if no new point is passed
+    else:
         _, mask = predictor.track(frame)
 
-    return mask, None
+    """
+    Transforms the raw SAM2 output into an usable np.ndarray.
+    mask > 0.0: True if value > 0.0 else False
+    squeeze:    removes dimensions of size 1 e.g. (1,1,H,W) to (H,W)
+    detach:     detaches tensor from the autograd graph
+    cpu:        moves the tensor from GPU to CPU memory
+    numpy:      converts the tensor to a numpy array
+    """
+    mask = (mask > 0.0).squeeze().detach().cpu().numpy()
+    return mask
 
 
-def overlay_mask(frame, mask, color=(0, 255, 0), transparency=0.3):
+def overlay_mask(frame: np.ndarray, mask: np.ndarray, color=(0, 255, 0), transparency=0.3):
     """
     Combines frame and mask to visualize the segmented area.
     :param frame: np.nparray containing the current frame
@@ -46,7 +47,6 @@ def overlay_mask(frame, mask, color=(0, 255, 0), transparency=0.3):
     :return: a masked frame
     """
 
-    mask = (mask > 0.0).squeeze().detach().cpu().numpy()
     color = np.array(color, dtype=np.uint8)
     m_frame = frame.copy()
 
@@ -62,8 +62,6 @@ def calculate_bounding_box(frame, mask):
     :param mask: the matching SAM2 output
     :return: tuple(x_center, y_center, width, height)
     """
-
-    mask = (mask > 0.0).squeeze().detach().cpu().numpy()
 
     height, width = frame.shape[:2]
 

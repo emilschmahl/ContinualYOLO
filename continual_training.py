@@ -1,12 +1,15 @@
+import config as cfg
 import cv2
-import torch
-import tkinter as tk
-from tkinter import simpledialog
-import threading
 import queue
 import segment
+import threading
+import tkinter as tk
+import torch
 import utils
 from model import YOLOTrainer
+from sam2.build_sam import build_sam2_camera_predictor
+from tkinter import simpledialog
+
 
 # auto-tune cudnn to improve performance
 torch.backends.cudnn.benchmark = True
@@ -14,6 +17,7 @@ torch.backends.cudnn.benchmark = True
 class_request_queue = queue.Queue()
 class_result_queue = queue.Queue()
 
+has_started_sam2 = False
 selected_point = None
 selected_class = None
 class_selected = True
@@ -48,10 +52,11 @@ def on_mouse_click(event, x, y, *_):
     :param y: mouse y coordinate
     """
 
-    global class_selected, selected_point
+    global class_selected, selected_point, has_started_sam2
 
     if event == cv2.EVENT_LBUTTONDOWN:
         selected_point = (x, y)
+        has_started_sam2 = True
         class_selected = False
 
 
@@ -62,6 +67,12 @@ if __name__ == "__main__":
     cv2.namedWindow(window_name)
     cv2.setMouseCallback(window_name, on_mouse_click)
 
+    # create a pre-trained instance of SAM2
+    predictor = build_sam2_camera_predictor(cfg.MODEL_CONFIG, cfg.SAM2_CHECKPOINT)
+
+    capture = cv2.VideoCapture(cfg.VIDEO_CAPTURE_DEVICE)
+    print("[INFO] Connected to camera")
+
     threading.Thread(target=tkinter_worker, daemon=True).start()
 
     trainer = YOLOTrainer()
@@ -70,18 +81,20 @@ if __name__ == "__main__":
     with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
         try:
             while True:
-                active, frame = utils.get_camera_frame()
+                active, frame = utils.get_camera_frame(capture)
                 if not active:
                     print(f"\033[91m[ERROR] NO FRAME WAS PASSED. Is the camera connected and running?\033[0m"f"")
                     break
 
                 if trainer.training:
-                    mask, selected_point = segment.get_mask(frame, selected_point)
+                    if has_started_sam2:
+                        mask = segment.get_mask(predictor, frame, selected_point)
+                        selected_point = None
 
-                    masked_frame = segment.overlay_mask(frame, mask) if (mask is not None and show_mask) else frame
-                    boxed_frame = segment.overlay_box(masked_frame, segment.calculate_bounding_box(frame, mask)) if (mask is not None and show_box) else masked_frame
+                        frame = segment.overlay_mask(frame, mask) if (mask is not None and show_mask) else frame
+                        frame = segment.overlay_box(frame, segment.calculate_bounding_box(frame, mask)) if (mask is not None and show_box) else frame
 
-                    cv2.imshow(window_name, boxed_frame)
+                    cv2.imshow(window_name, frame)
 
                     key = cv2.waitKey(1)
                     if key == ord('q'):
@@ -118,6 +131,7 @@ if __name__ == "__main__":
                             prediction.box_width,
                             prediction.box_height
                         ))
+                        print(prediction.class_scores)
 
                         cv2.imshow(window_name, masked_frame)
                     else:
