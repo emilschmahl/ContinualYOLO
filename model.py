@@ -17,6 +17,7 @@ from ultralytics.nn import DetectionModel
 from ultralytics.nn.modules import Detect
 from ultralytics.utils import DEFAULT_CFG_DICT, IterableSimpleNamespace
 from ultralytics.utils.loss import v8DetectionLoss
+from ultralytics.utils.nms import non_max_suppression
 
 
 class Sample:
@@ -52,6 +53,20 @@ class LatestValue:
             return values
 
 
+class Detection:
+    """
+    Represents a single detected object within a frame.
+    """
+    def __init__(self, class_id, class_name, confidence, x_center, y_center, box_width, box_height):
+        self.class_id = class_id
+        self.class_name = class_name
+        self.confidence = confidence
+        self.x_center = x_center
+        self.y_center = y_center
+        self.box_width = box_width
+        self.box_height = box_height
+
+
 class YOLOTrainer:
     """
     Manages continual learning of a YOLO model in a background thread that
@@ -77,7 +92,7 @@ class YOLOTrainer:
 
         # EMA-smoothed confidence to reduce frame-to-frame jitter from
         # per-frame argmax anchor selection (no NMS/tracking in place)
-        self._confidence_ema: float | None = None
+        self._confidence_ema: dict[int, float] = {}
 
         # latest frame for prediction input (no queue is used to avoid an overflow due to lagging)
         self.frame = LatestValue()
@@ -94,7 +109,7 @@ class YOLOTrainer:
         self.model.to(cfg.DEVICE)
 
         try:
-            checkpoint = torch.load(cfg.CONTINUAL_MODEL, map_location=cfg.DEVICE)
+            checkpoint = torch.load(cfg.CONTINUAL_MODEL, map_location=cfg.DEVICE, weights_only=False)
             self._load(checkpoint)
             print(f"[INFO] EXISTING MODEL WAS LOADED ({checkpoint["nc"]} classes)")
 
@@ -348,38 +363,40 @@ class YOLOTrainer:
         with self.lock, torch.no_grad():
             raw_predictions = self.det_model(img)[0]
 
-        predictions = raw_predictions.squeeze(0)
-        boxes, class_scores = predictions[:4], predictions[4:]
+        nms_result = non_max_suppression(
+            raw_predictions,
+            conf_thres=cfg.CONF_THRESHOLD,
+            iou_thres=cfg.IOU_THRESHOLD,
+            max_det=cfg.MAX_DETECTIONS,
+            agnostic=True,
+        )[0]
 
-        # pick the single anchor point with the highest confidence across all classes
-        best_idx = class_scores.amax(dim=0).argmax()
-        best_class = int(class_scores[:, best_idx].argmax())
+        detections = []
+        for x1, y1, x2, y2, confidence, class_id in nms_result.tolist():
+            class_id = int(class_id)
 
-        cx, cy, w, h = boxes[:, best_idx].tolist()
-        # probabilities for all classes
-        scores = class_scores[:, best_idx].tolist()
+            # EMA smoothing per class to reduce frame-to-frame jitter
+            previous = self._confidence_ema.get(class_id)
+            smoothed = (
+                confidence if previous is None
+                else cfg.CONFIDENCE_EMA * previous + (1 - cfg.CONFIDENCE_EMA) * confidence
+            )
+            self._confidence_ema[class_id] = smoothed
 
-        #softmax_scores = F.softmax(class_scores[:, best_idx], dim=0).tolist()
+            box_width, box_height = x2 - x1, y2 - y1
+            x_center, y_center = x1 + box_width / 2, y1 + box_height / 2
 
-        raw_confidence = scores[best_class]
-        best_class_name = self.det_model.names.get(best_class, str(best_class))
+            detections.append(Detection(
+                class_id=class_id,
+                class_name=self.det_model.names.get(class_id, str(class_id)),
+                confidence=smoothed,
+                x_center=x_center / cfg.FRAME_WIDTH,
+                y_center=y_center / cfg.FRAME_HEIGHT,
+                box_width=box_width / cfg.FRAME_WIDTH,
+                box_height=box_height / cfg.FRAME_HEIGHT,
+            ))
 
-        if self._confidence_ema is None:
-            self._confidence_ema = raw_confidence
-        else:
-            a = cfg.CONFIDENCE_EMA
-            self._confidence_ema = a * self._confidence_ema + (1 - a) * raw_confidence
-
-        self.predicted_frame.set(
-            frame=frame,
-            x_center=cx / cfg.FRAME_WIDTH,
-            y_center=cy / cfg.FRAME_HEIGHT,
-            box_width=w / cfg.FRAME_WIDTH,
-            box_height=h / cfg.FRAME_HEIGHT,
-            class_scores=scores,
-            class_name=best_class_name,
-            confidence=self._confidence_ema,
-        )
+        self.predicted_frame.set(frame=frame, detections=detections)
 
 
     def start(self):

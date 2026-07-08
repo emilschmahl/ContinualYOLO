@@ -131,25 +131,38 @@ if __name__ == "__main__":
                     trainer.set_frame(frame)
                     prediction = trainer.predicted_frame.get()
                     if prediction is not None:
-                        masked_frame = segment.overlay_box(prediction.frame, (
-                            prediction.x_center,
-                            prediction.y_center,
-                            prediction.box_width,
-                            prediction.box_height
-                        ))
-                        print(prediction.class_scores)
+                        masked_frame = prediction.frame
+                        height, width = masked_frame.shape[:2]
 
-                        label = f"{prediction.class_name}: {prediction.confidence * 100:.1f}%"
-                        cv2.putText(
-                            masked_frame,
-                            label,
-                            (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            1.0,
-                            (0, 255, 0),
-                            2,
-                            cv2.LINE_AA
-                        )
+                        for i, detection in enumerate(prediction.detections):
+                            masked_frame = segment.overlay_box(masked_frame, (
+                                detection.x_center,
+                                detection.y_center,
+                                detection.box_width,
+                                detection.box_height
+                            ))
+
+                            box_top = (detection.y_center - detection.box_height / 2) * height
+                            box_left = (detection.x_center - detection.box_width / 2) * width
+
+                            label = f"{detection.class_name}: {detection.confidence * 100:.1f}%"
+                            (text_width, text_height), _ = cv2.getTextSize(
+                                label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+                            )
+
+                            text_x = int(max(0, min(box_left, width - text_width)))
+                            text_y = int(max(text_height + 4, box_top - 6))
+
+                            cv2.putText(
+                                masked_frame,
+                                label,
+                                (text_x, text_y),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7,
+                                (0, 255, 0),
+                                2,
+                                cv2.LINE_AA
+                            )
 
                         cv2.imshow(window_name, masked_frame)
                     else:
