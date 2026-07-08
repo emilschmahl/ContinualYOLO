@@ -3,6 +3,7 @@ import cv2
 import queue
 import segment
 import threading
+import time
 import tkinter as tk
 import torch
 import utils
@@ -12,7 +13,7 @@ from tkinter import simpledialog
 
 
 # auto-tune cudnn to improve performance
-torch.backends.cudnn.benchmark = True
+# torch.backends.cudnn.benchmark = True
 
 class_request_queue = queue.Queue()
 class_result_queue = queue.Queue()
@@ -24,6 +25,7 @@ class_selected = True
 waiting_for_class = False
 show_mask = True
 show_box = True
+recording = False
 
 
 def tkinter_worker():
@@ -96,6 +98,10 @@ if __name__ == "__main__":
 
                     cv2.imshow(window_name, frame)
 
+                    if recording:
+                        trainer.save_yolo_sample(frame, selected_class, mask)
+                        time.sleep(0.1)
+
                     key = cv2.waitKey(1)
                     if key == ord('q'):
                         trainer.stop()
@@ -108,6 +114,9 @@ if __name__ == "__main__":
                         trainer.save_yolo_sample(frame, selected_class, mask)
                     elif key == ord("e"):
                         trainer.training = not trainer.training
+                    elif key == ord("r"):
+                        print("RECORDING")
+                        recording = not recording
 
                     if not class_selected and not waiting_for_class:
                         class_request_queue.put("Assign class to selected object:")
