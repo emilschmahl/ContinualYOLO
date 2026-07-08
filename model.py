@@ -94,6 +94,12 @@ class YOLOTrainer:
         # per-frame argmax anchor selection (no NMS/tracking in place)
         self._confidence_ema: dict[int, float] = {}
 
+        # holds the feature map captured by the EigenCAM forward hook (set
+        # fresh on every forward pass, read right after in _predict_one)
+        self._eigencam_activation: torch.Tensor | None = None
+        self._eigencam_hook_handle = None
+        self._eigencam_smoothed: np.ndarray | None = None
+
         # latest frame for prediction input (no queue is used to avoid an overflow due to lagging)
         self.frame = LatestValue()
         self.predicted_frame = LatestValue()
@@ -190,6 +196,7 @@ class YOLOTrainer:
         detect.cv3.requires_grad_(True)
 
         self._rebuild_optimizer_and_criterion()
+        self._register_eigencam_hook()
 
 
     def _save(self):
@@ -242,7 +249,7 @@ class YOLOTrainer:
                 print("[INFO] PROGRAM RUNS IN PREDICTION MODE")
                 while not self.training and self.active:
 
-                    self._predict_one()
+                    self._predict()
                     time.sleep(0.01)
 
         self._save()
@@ -343,14 +350,32 @@ class YOLOTrainer:
 
         self._sync_names()
         self._rebuild_optimizer_and_criterion()
+        self._register_eigencam_hook()
 
         print(f"[INFO] Added new class to model: {classes} -> {new_classes} classes")
 
 
-    def _predict_one(self):
+    def _register_eigencam_hook(self):
         """
-        Predicts the safest prediction in the frame. (Cannot predict more than one object)
-        Uses self.frame as input and self.predicted_frame as output.
+        Registers a forward hook on the last backbone/neck layer, right
+        before the Detect head, to capture its output feature map for
+        EigenCAM. Must be re-registered whenever det_model is rebuilt.
+        """
+        if self._eigencam_hook_handle is not None:
+            self._eigencam_hook_handle.remove()
+
+        target_layer = self.det_model.model[-2]
+
+        def hook(_module, _input, output):
+            self._eigencam_activation = output[-1] if isinstance(output, (list, tuple)) else output
+
+        self._eigencam_hook_handle = target_layer.register_forward_hook(hook)
+
+
+    def _predict(self):
+        """
+        predict objects in frame and calculate eigencam
+        save frame, detected objects and eigencam in predicted_frame
         """
         frame = self.frame.get()
         if frame is None:
@@ -361,21 +386,27 @@ class YOLOTrainer:
         img = torch.from_numpy(frame).permute(2, 0, 1).float().div(255.0).unsqueeze(0).to(cfg.DEVICE)
 
         with self.lock, torch.no_grad():
+            # predict frame
             raw_predictions = self.det_model(img)[0]
 
         nms_result = non_max_suppression(
             raw_predictions,
+            # remove predictions under the threshold
             conf_thres=cfg.CONF_THRESHOLD,
+            # combine predictions over the threshold
             iou_thres=cfg.IOU_THRESHOLD,
+            # maximum amount of predictions
             max_det=cfg.MAX_DETECTIONS,
+            # combine prediction even if classes are unequal
             agnostic=True,
+        # first image in batch (batch is 1)
         )[0]
 
         detections = []
         for x1, y1, x2, y2, confidence, class_id in nms_result.tolist():
             class_id = int(class_id)
 
-            # EMA smoothing per class to reduce frame-to-frame jitter
+            # exponential moving average smoothing per class to reduce frame-to-frame jitter
             previous = self._confidence_ema.get(class_id)
             smoothed = (
                 confidence if previous is None
@@ -396,7 +427,26 @@ class YOLOTrainer:
                 box_height=box_height / cfg.FRAME_HEIGHT,
             ))
 
-        self.predicted_frame.set(frame=frame, detections=detections)
+
+        eigencam = None
+
+        if self._eigencam_activation is not None:
+            height, width = frame.shape[:2]
+            # calculate the eigencam heatmap
+            raw_eigencam = utils.eigencam_heatmap(self._eigencam_activation, height, width)
+
+            # exponential moving average smoothing to reduce frame-to-frame jitter
+            if raw_eigencam is not None:
+                if self._eigencam_smoothed is None or self._eigencam_smoothed.shape != raw_eigencam.shape:
+                    self._eigencam_smoothed = raw_eigencam
+                else:
+                    self._eigencam_smoothed = (
+                        cfg.EIGENCAM_EMA * self._eigencam_smoothed + (1 - cfg.EIGENCAM_EMA) * raw_eigencam
+                    )
+
+            eigencam = self._eigencam_smoothed
+
+        self.predicted_frame.set(frame=frame, detections=detections, eigencam=eigencam)
 
 
     def start(self):

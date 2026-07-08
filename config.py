@@ -1,11 +1,11 @@
 import torch
 from pathlib import Path
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
 
 VIDEO_CAPTURE_DEVICE = 1
 
-CONTINUAL_MODEL = f"{Path(__file__).resolve().parent}\\continual_yolo.pt"
+CONTINUAL_MODEL = Path(__file__).resolve().parent / "continual_yolo.pt"
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 
@@ -22,6 +22,8 @@ SAMPLE_BUFFER_SIZE = 500
 SAMPLE_BATCH_SIZE = 7
 
 CONFIDENCE_EMA = 0.6
+EIGENCAM_EMA = 0.7
+EIGENCAM_MIN_EXPLAINED_VARIANCE = 0.15
 
 CONF_THRESHOLD = 0.25
 IOU_THRESHOLD = 0.45

@@ -23,6 +23,7 @@ waiting_for_class = False
 show_mask = True
 show_box = True
 recording = False
+show_eigencam = False
 
 
 def tkinter_worker():
@@ -77,7 +78,7 @@ if __name__ == "__main__":
     trainer = YOLOTrainer()
     trainer.start()
 
-    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
+    with torch.inference_mode(), torch.autocast(cfg.DEVICE, dtype=torch.float16):
         try:
             while True:
                 active, frame = utils.get_camera_frame(capture)
@@ -132,6 +133,10 @@ if __name__ == "__main__":
                     prediction = trainer.predicted_frame.get()
                     if prediction is not None:
                         masked_frame = prediction.frame
+
+                        if show_eigencam and getattr(prediction, "eigencam", None) is not None:
+                            masked_frame = utils.overlay_eigencam(masked_frame, prediction.eigencam)
+
                         height, width = masked_frame.shape[:2]
 
                         for i, detection in enumerate(prediction.detections):
@@ -174,6 +179,8 @@ if __name__ == "__main__":
                         break
                     elif key == ord("e"):
                         trainer.training = not trainer.training
+                    elif key == ord('x'):
+                        show_eigencam = not show_eigencam
 
 
         finally:

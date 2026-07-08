@@ -87,3 +87,44 @@ def build_batch(samples):
         "cls": torch.tensor(cls, dtype=torch.float32, device=cfg.DEVICE).unsqueeze(1),
         "bboxes": torch.tensor(bboxes, dtype=torch.float32, device=cfg.DEVICE)
     }
+
+
+def eigencam_heatmap(activation: torch.Tensor, out_height: int, out_width: int):
+    """
+    Computes an EigenCAM saliency map via PCA (first principal component)
+    across the channel dimension. Returns None if the activation has no
+    real dominant direction (near-uniform / noise) -- normalizing pure
+    noise would otherwise blow tiny differences up into a fake, full-frame
+    "hot" heatmap.
+    """
+    with torch.no_grad():
+        features = activation[0].detach().float()  # (C, H, W)
+        c, h, w = features.shape
+        flat = features.reshape(c, h * w)
+        flat = flat - flat.mean(dim=1, keepdim=True)
+
+        _, s, v = torch.linalg.svd(flat, full_matrices=False)
+
+        # share of total variance the first principal component explains;
+        # low ratio means "no real signal here", just noise
+        energy = s ** 2
+        explained_ratio = (energy[0] / energy.sum()).item() if energy.sum() > 0 else 0.0
+        if explained_ratio < cfg.EIGENCAM_MIN_EXPLAINED_VARIANCE:
+            return None
+
+        principal = v[0].reshape(h, w)
+        principal = principal - principal.min()
+        max_val = principal.max()
+        if max_val > 0:
+            principal = principal / max_val
+
+        heatmap = principal.cpu().numpy().astype(np.float32)
+
+    return cv2.resize(heatmap, (out_width, out_height), interpolation=cv2.INTER_LINEAR)
+
+
+def overlay_eigencam(frame: np.ndarray, heatmap: np.ndarray, alpha: float = 0.4) -> np.ndarray:
+    """Blends an EigenCAM heatmap onto a frame for visualization."""
+    heatmap_uint8 = (np.clip(heatmap, 0.0, 1.0) * 255).astype(np.uint8)
+    heatmap_color = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+    return cv2.addWeighted(frame, 1 - alpha, heatmap_color, alpha, 0)
