@@ -79,8 +79,10 @@ class YOLOTrainer:
         self.frame = LatestValue()
         self.predicted_frame = LatestValue()
 
-        # temporarily saves samples to create training batches
-        self.sample_buffer = RingBuffer(capacity=cfg.SAMPLE_BUFFER_SIZE, dtype=object)
+        # temporarily saves samples to create training batches (save samples of all trained classes)
+        self.per_class_buffers: dict[int, RingBuffer] = defaultdict(
+            lambda: RingBuffer(capacity=cfg.SAMPLE_BUFFER_SIZE, dtype=object)
+        )
         # holds training sample input from the main thread
         self.sample_queue = queue.Queue()
 
@@ -218,14 +220,18 @@ class YOLOTrainer:
         """
         sample.class_id = self._get_class_id(sample.class_name)
 
-        self.sample_buffer.append(sample)
+        # store sample in buffer
+        if sample.class_id is not None:
+            self.per_class_buffers[sample.class_id].append(sample)
 
         batch_samples = [sample]
-        if len(self.sample_buffer) > 1:
-            n = min(cfg.SAMPLE_BATCH_SIZE, len(self.sample_buffer) - 1)
-            # randomly pick samples from the buffer to be used in the batch
-            index = np.asarray(np.random.choice(len(self.sample_buffer) - 1, size=n, replace=False))
-            batch_samples += [self.sample_buffer[i] for i in index]
+        for class_id, buf in self.per_class_buffers.items():
+            if len(buf) == 0:
+                continue
+            n = min(cfg.SAMPLE_BATCH_SIZE, len(buf))
+            # get SAMPLE_BATCH_SIZE batches from all classes if possible
+            index = np.random.choice(len(buf), size=n, replace=False)
+            batch_samples += [buf[i] for i in index]
 
         batch = utils.build_batch(batch_samples)
 
@@ -325,10 +331,16 @@ class YOLOTrainer:
 
         # pick the single anchor point with the highest confidence across all classes
         best_idx = class_scores.amax(dim=0).argmax()
+        best_class = int(class_scores[:, best_idx].argmax())
 
         cx, cy, w, h = boxes[:, best_idx].tolist()
         # probabilities for all classes
         scores = class_scores[:, best_idx].tolist()
+
+        #softmax_scores = F.softmax(class_scores[:, best_idx], dim=0).tolist()
+
+        best_confidence = scores[best_class]
+        best_class_name = self.det_model.names.get(best_class, str(best_class))
 
         self.predicted_frame.set(
             frame=frame,
@@ -337,6 +349,8 @@ class YOLOTrainer:
             box_width=w / cfg.FRAME_WIDTH,
             box_height=h / cfg.FRAME_HEIGHT,
             class_scores=scores,
+            class_name=best_class_name,
+            confidence=best_confidence,
         )
 
 

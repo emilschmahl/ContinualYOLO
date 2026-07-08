@@ -12,9 +12,6 @@ from sam2.build_sam import build_sam2_camera_predictor
 from tkinter import simpledialog
 
 
-# auto-tune cudnn to improve performance
-# torch.backends.cudnn.benchmark = True
-
 class_request_queue = queue.Queue()
 class_result_queue = queue.Queue()
 
@@ -141,6 +138,18 @@ if __name__ == "__main__":
                             prediction.box_height
                         ))
                         print(prediction.class_scores)
+
+                        label = f"{prediction.class_name}: {prediction.confidence * 100:.1f}%"
+                        cv2.putText(
+                            masked_frame,
+                            label,
+                            (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1.0,
+                            (0, 255, 0),
+                            2,
+                            cv2.LINE_AA
+                        )
 
                         cv2.imshow(window_name, masked_frame)
                     else:
