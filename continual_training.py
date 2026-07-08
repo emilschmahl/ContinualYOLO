@@ -1,15 +1,14 @@
 import config as cfg
 import cv2
+import platform
 import queue
 import segment
 import threading
 import time
-import tkinter as tk
 import torch
 import utils
 from model import YOLOTrainer
 from sam2.build_sam import build_sam2_camera_predictor
-from tkinter import simpledialog
 
 
 class_request_queue = queue.Queue()
@@ -24,23 +23,21 @@ show_mask = True
 show_box = True
 recording = False
 show_eigencam = False
+mask = None
 
 
-def tkinter_worker():
+def console_input_worker():
     """
     Waits for class request, then takes class name from user.
     This function runs in its own thread to not interrupt the main function.
     """
-    root = tk.Tk()
-    root.withdraw()
 
     while True:
         prompt = class_request_queue.get()
         if prompt is None:
             continue
-        root.attributes("-topmost", True)
-        result = simpledialog.askstring("", prompt, parent=root)
-        class_result_queue.put(result)
+        result = input(f"{prompt} ").strip()
+        class_result_queue.put(result if result else None)
 
 
 def on_mouse_click(event, x, y, *_):
@@ -62,7 +59,7 @@ def on_mouse_click(event, x, y, *_):
 
 if __name__ == "__main__":
 
-    window_name = "Live Preview, press Q to quit, press M to toggle mask, press B to toggle box, press S to save sample"
+    window_name = "Live Preview, press Q to quit"
     cv2.startWindowThread()
     cv2.namedWindow(window_name)
     cv2.setMouseCallback(window_name, on_mouse_click)
@@ -70,10 +67,15 @@ if __name__ == "__main__":
     # create a pre-trained instance of SAM2
     predictor = build_sam2_camera_predictor(cfg.MODEL_CONFIG, cfg.SAM2_CHECKPOINT)
 
-    capture = cv2.VideoCapture(cfg.VIDEO_CAPTURE_DEVICE)
+    # MacOS
+    if platform.system() == "Darwin":
+        capture = cv2.VideoCapture(cfg.VIDEO_CAPTURE_DEVICE, cv2.CAP_AVFOUNDATION)
+    else:
+        capture = cv2.VideoCapture(cfg.VIDEO_CAPTURE_DEVICE)
+
     print("[INFO] Connected to camera")
 
-    threading.Thread(target=tkinter_worker, daemon=True).start()
+    threading.Thread(target=console_input_worker, daemon=True).start()
 
     trainer = YOLOTrainer()
     trainer.start()
@@ -94,9 +96,21 @@ if __name__ == "__main__":
                         frame = segment.overlay_mask(frame, mask) if (mask is not None and show_mask) else frame
                         frame = segment.overlay_box(frame, segment.calculate_bounding_box(frame, mask)) if (mask is not None and show_box) else frame
 
+                    class_label = f"Class: {selected_class}" if selected_class is not None else "Class: (none)"
+                    cv2.putText(
+                        frame,
+                        class_label,
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        (0, 255, 0),
+                        2,
+                        cv2.LINE_AA
+                        )
+
                     cv2.imshow(window_name, frame)
 
-                    if recording:
+                    if recording and  mask is not None:
                         trainer.save_yolo_sample(frame, selected_class, mask)
                         time.sleep(0.1)
 
@@ -109,12 +123,16 @@ if __name__ == "__main__":
                     elif key == ord('b'):
                         show_box = not show_box
                     elif key == ord("s"):
-                        trainer.save_yolo_sample(frame, selected_class, mask)
+                        if mask is not None:
+                            trainer.save_yolo_sample(frame, selected_class, mask)
                     elif key == ord("e"):
                         trainer.training = not trainer.training
-                    elif key == ord("r"):
-                        print("RECORDING")
+                    elif key == ord("r") and mask is not None:
                         recording = not recording
+                        if recording:
+                            print("RECORDING STARTED")
+                        else:
+                            print("RECORDING STOPPED")
 
                     if not class_selected and not waiting_for_class:
                         class_request_queue.put("Assign class to selected object:")
