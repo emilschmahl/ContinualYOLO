@@ -75,6 +75,10 @@ class YOLOTrainer:
         # toggles training mode
         self.training = True
 
+        # EMA-smoothed confidence to reduce frame-to-frame jitter from
+        # per-frame argmax anchor selection (no NMS/tracking in place)
+        self._confidence_ema: float | None = None
+
         # latest frame for prediction input (no queue is used to avoid an overflow due to lagging)
         self.frame = LatestValue()
         self.predicted_frame = LatestValue()
@@ -139,6 +143,7 @@ class YOLOTrainer:
         :param checkpoint: dict as produced by save() or _empty_checkpoint()
         """
 
+        print("LOADING...")
         # build model for number of classes and load saved weights
         nc = checkpoint["nc"]
         self.det_model = DetectionModel(cfg=checkpoint["yaml"], nc=nc, verbose=False).to(cfg.DEVICE)
@@ -155,6 +160,15 @@ class YOLOTrainer:
         self.classes.update(saved_classes)
         self._sync_names()
 
+        # load class buffer for previously learned classes
+        self.per_class_buffers = defaultdict(
+            lambda: RingBuffer(capacity=cfg.SAMPLE_BUFFER_SIZE, dtype=object)
+        )
+        for class_id, samples in checkpoint.get("per_class_buffers", {}).items():
+            buf = self.per_class_buffers[class_id]
+            for sample in samples:
+                buf.append(sample)
+
         # freeze all but the last layer
         self.det_model.requires_grad_(False)
         detect = cast(Detect, cast(object, self.det_model.model[-1]))
@@ -169,12 +183,20 @@ class YOLOTrainer:
         and the name->id mapping needed to restore self.classes on load.
         """
 
+        print("SAVING...")
+
         detect = cast(Detect, cast(object, self.det_model.model[-1]))
+
+        buffers_to_save = {
+            class_id: list(buf) for class_id, buf in self.per_class_buffers.items()
+        }
+
         torch.save({
             "model_state_dict": self.det_model.state_dict(),
             "yaml": self.det_model.yaml,
             "nc": detect.nc,
             "classes": dict(self.classes),
+            "per_class_buffers": buffers_to_save,
         }, cfg.CONTINUAL_MODEL)
 
         print(f"[INFO] MODEL WAS SAVED to {cfg.CONTINUAL_MODEL}")
@@ -339,8 +361,14 @@ class YOLOTrainer:
 
         #softmax_scores = F.softmax(class_scores[:, best_idx], dim=0).tolist()
 
-        best_confidence = scores[best_class]
+        raw_confidence = scores[best_class]
         best_class_name = self.det_model.names.get(best_class, str(best_class))
+
+        if self._confidence_ema is None:
+            self._confidence_ema = raw_confidence
+        else:
+            a = cfg.CONFIDENCE_EMA
+            self._confidence_ema = a * self._confidence_ema + (1 - a) * raw_confidence
 
         self.predicted_frame.set(
             frame=frame,
@@ -350,7 +378,7 @@ class YOLOTrainer:
             box_height=h / cfg.FRAME_HEIGHT,
             class_scores=scores,
             class_name=best_class_name,
-            confidence=best_confidence,
+            confidence=self._confidence_ema,
         )
 
 
