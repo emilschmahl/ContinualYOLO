@@ -65,7 +65,12 @@ def main():
     # ------------------------------------------------------------
     print("\nLinking SAM2...")
 
-    site_packages = Path(site.getsitepackages()[0])
+    site_packages = Path(
+        next(
+            p for p in site.getsitepackages()
+            if p.endswith("site-packages")
+        )
+    )
     pth_file = site_packages / "sam2.pth"
     pth_file.write_text(str(sam2_root.resolve()), encoding="utf-8")
 
