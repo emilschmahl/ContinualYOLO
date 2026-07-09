@@ -1,9 +1,9 @@
 import torch
 from pathlib import Path
 
-DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+DEVICE = "cuda"
 
-VIDEO_CAPTURE_DEVICE = 1
+VIDEO_CAPTURE_DEVICE = 0
 
 CONTINUAL_MODEL = Path(__file__).resolve().parent / "continual_yolo.pt"
 

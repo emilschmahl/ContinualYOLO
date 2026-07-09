@@ -1,6 +1,5 @@
 import config as cfg
 import cv2
-import platform
 import queue
 import segment
 import threading
@@ -16,8 +15,6 @@ warnings.filterwarnings(
     category=UserWarning,
     module="sam2.sam2_camera_predictor"
 )
-
-
 
 class_request_queue = queue.Queue()
 class_result_queue = queue.Queue()
@@ -67,7 +64,7 @@ def on_mouse_click(event, x, y, *_):
 
 if __name__ == "__main__":
 
-    window_name = "Live Preview, press Q to quit"
+    window_name = "Continual YOLO"
     cv2.startWindowThread()
     cv2.namedWindow(window_name)
     cv2.setMouseCallback(window_name, on_mouse_click)
@@ -75,11 +72,7 @@ if __name__ == "__main__":
     # create a pre-trained instance of SAM2
     predictor = build_sam2_camera_predictor(cfg.MODEL_CONFIG, cfg.SAM2_CHECKPOINT, device=cfg.DEVICE)
 
-    # MacOS
-    if platform.system() == "Darwin":
-        capture = cv2.VideoCapture(cfg.VIDEO_CAPTURE_DEVICE, cv2.CAP_AVFOUNDATION)
-    else:
-        capture = cv2.VideoCapture(cfg.VIDEO_CAPTURE_DEVICE)
+    capture = cv2.VideoCapture(cfg.VIDEO_CAPTURE_DEVICE)
 
     print("[INFO] Connected to camera")
 
@@ -108,11 +101,11 @@ if __name__ == "__main__":
                     cv2.putText(
                         frame,
                         class_label,
-                        (10, 30),
+                        (10, 30), #position
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        (0, 255, 0),
-                        2,
+                        0.8, #text size
+                        (0, 255, 0), # color
+                        2, #thickness
                         cv2.LINE_AA
                         )
 
