@@ -9,6 +9,14 @@ import torch
 import utils
 from model import YOLOTrainer
 from sam2.build_sam import build_sam2_camera_predictor
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="sam2.sam2_camera_predictor"
+)
+
 
 
 class_request_queue = queue.Queue()
