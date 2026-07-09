@@ -76,35 +76,18 @@ def main():
     # ------------------------------------------------------------
     print("\nDownloading SAM2 checkpoints...")
 
-    if platform.system() == "Windows":
-        download_script = sam2_root / "checkpoints" / "download_ckpts.py"
+    download_script = "download_checkpoints.py"
 
-        if not download_script.exists():
-            sys.exit(
-                "\nERROR: Could not find "
-                "'segment-anything-2-real-time/checkpoints/download_ckpts.py'."
-            )
-
-        run(
-            [
-                sys.executable,
-                str(download_script),
-            ]
-        )
-
-    else:
-        download_script = sam2_root / "checkpoints" / "download_ckpts.sh"
-
-        if not download_script.exists():
-            sys.exit(
-                "\nERROR: Could not find "
-                "'segment-anything-2-real-time/checkpoints/download_ckpts.sh'."
-            )
-
-        run(
-            ["bash", download_script.name],
-            cwd=download_script.parent,
-        )
+    run(
+        [
+            sys.executable,
+            str(download_script),
+            "--script",
+            r"./segment-anything-2-real-time/checkpoints/download_ckpts.sh",
+            "--dest",
+            r"./segment-anything-2-real-time/checkpoints/"
+        ]
+    )
 
     # ------------------------------------------------------------
     # Verify installation
