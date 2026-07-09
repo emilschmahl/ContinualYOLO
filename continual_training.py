@@ -65,7 +65,7 @@ if __name__ == "__main__":
     cv2.setMouseCallback(window_name, on_mouse_click)
 
     # create a pre-trained instance of SAM2
-    predictor = build_sam2_camera_predictor(cfg.MODEL_CONFIG, cfg.SAM2_CHECKPOINT)
+    predictor = build_sam2_camera_predictor(cfg.MODEL_CONFIG, cfg.SAM2_CHECKPOINT, device=cfg.DEVICE)
 
     # MacOS
     if platform.system() == "Darwin":
