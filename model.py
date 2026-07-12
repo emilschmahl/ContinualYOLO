@@ -193,6 +193,7 @@ class YOLOTrainer:
         # freeze all but the last layer
         self.det_model.requires_grad_(False)
         detect = cast(Detect, cast(object, self.det_model.model[-1]))
+        detect.cv2.requires_grad_(True)
         detect.cv3.requires_grad_(True)
 
         self._rebuild_optimizer_and_criterion()
