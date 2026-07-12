@@ -190,7 +190,7 @@ class YOLOTrainer:
             for sample in samples:
                 buf.append(sample)
 
-        # freeze all but the last layer
+        # freeze all layers excluding the head 
         self.det_model.requires_grad_(False)
         detect = cast(Detect, cast(object, self.det_model.model[-1]))
         detect.cv2.requires_grad_(True)
