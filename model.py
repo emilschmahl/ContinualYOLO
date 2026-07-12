@@ -90,10 +90,6 @@ class YOLOTrainer:
         # toggles training mode
         self.training = True
 
-        # EMA-smoothed confidence to reduce frame-to-frame jitter from
-        # per-frame argmax anchor selection (no NMS/tracking in place)
-        self._confidence_ema: dict[int, float] = {}
-
         # latest frame for prediction input (no queue is used to avoid an overflow due to lagging)
         self.frame = LatestValue()
         self.predicted_frame = LatestValue()
@@ -382,21 +378,13 @@ class YOLOTrainer:
         for x1, y1, x2, y2, confidence, class_id in nms_result.tolist():
             class_id = int(class_id)
 
-            # exponential moving average smoothing per class to reduce frame-to-frame jitter
-            previous = self._confidence_ema.get(class_id)
-            smoothed = (
-                confidence if previous is None
-                else cfg.CONFIDENCE_EMA * previous + (1 - cfg.CONFIDENCE_EMA) * confidence
-            )
-            self._confidence_ema[class_id] = smoothed
-
             box_width, box_height = x2 - x1, y2 - y1
             x_center, y_center = x1 + box_width / 2, y1 + box_height / 2
 
             detections.append(Detection(
                 class_id=class_id,
                 class_name=self.det_model.names.get(class_id, str(class_id)),
-                confidence=smoothed,
+                confidence=confidence,
                 x_center=x_center / cfg.FRAME_WIDTH,
                 y_center=y_center / cfg.FRAME_HEIGHT,
                 box_width=box_width / cfg.FRAME_WIDTH,
