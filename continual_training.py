@@ -27,7 +27,6 @@ waiting_for_class = False
 show_mask = True
 show_box = True
 recording = False
-show_eigencam = False
 mask = None
 
 
@@ -153,9 +152,6 @@ if __name__ == "__main__":
                     if prediction is not None:
                         masked_frame = prediction.frame
 
-                        if show_eigencam and getattr(prediction, "eigencam", None) is not None:
-                            masked_frame = utils.overlay_eigencam(masked_frame, prediction.eigencam)
-
                         height, width = masked_frame.shape[:2]
 
                         for i, detection in enumerate(prediction.detections):
@@ -198,8 +194,6 @@ if __name__ == "__main__":
                         break
                     elif key == ord("e"):
                         trainer.training = not trainer.training
-                    elif key == ord('x'):
-                        show_eigencam = not show_eigencam
 
 
         finally:

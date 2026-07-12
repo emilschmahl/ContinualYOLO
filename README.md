@@ -9,7 +9,7 @@ Train a YOLO object detector live with your camera. Choose an object by clicking
   - assign a class name in the console 
   - hit `s` (save one sample) or `r` (record) to save frames as training samples 
   - the model trains incrementally in a background thread
-- **Prediction mode**: the trained model runs live inference on the camera feed, drawing labeled bounding boxes and confidence scores. Press `x` to toggle the EigenCAM overlay
+- **Prediction mode**: the trained model runs live inference on the camera feed, drawing labeled bounding boxes and confidence scores.
 - Model checkpoints (weights, learned classes, sample buffers) persist to disk, so training picks up where you left off next time.
 
 ## Requirements
@@ -86,7 +86,6 @@ A window opens showing the camera feed, starting in **training mode**.
 | Action | Effect |
 |---|---|
 | `e` | Switches back to training mode |
-| `x` | Toggles an EigenCAM saliency overlay, showing which regions the model is focusing on |
 | `q` | Quits |
 
 In this mode the model runs live inference on the camera feed and draws labeled, confidence-scored bounding boxes for everything it currently recognizes.
@@ -107,7 +106,7 @@ On quit, the model's weights, learned class list, and per-class sample buffers a
 | `LEARNING_RATE` | Optimizer learning rate for continual training              |
 | `SAMPLE_BUFFER_SIZE` | Max samples kept per class for replay during training       |
 | `SAMPLE_BATCH_SIZE` | Samples drawn per class per training step                   |
-| `CONFIDENCE_EMA` / `EIGENCAM_EMA` | Smoothing factors to reduce frame-to-frame jitter           |
+| `CONFIDENCE_EMA` | Smoothing factors to reduce frame-to-frame jitter           |
 | `CONF_THRESHOLD` / `IOU_THRESHOLD` / `MAX_DETECTIONS` | Non-max suppression settings for prediction                 |
 
 ## Troubleshooting

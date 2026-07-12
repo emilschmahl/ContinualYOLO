@@ -94,12 +94,6 @@ class YOLOTrainer:
         # per-frame argmax anchor selection (no NMS/tracking in place)
         self._confidence_ema: dict[int, float] = {}
 
-        # holds the feature map captured by the EigenCAM forward hook (set
-        # fresh on every forward pass, read right after in _predict_one)
-        self._eigencam_activation: torch.Tensor | None = None
-        self._eigencam_hook_handle = None
-        self._eigencam_smoothed: np.ndarray | None = None
-
         # latest frame for prediction input (no queue is used to avoid an overflow due to lagging)
         self.frame = LatestValue()
         self.predicted_frame = LatestValue()
@@ -190,14 +184,13 @@ class YOLOTrainer:
             for sample in samples:
                 buf.append(sample)
 
-        # freeze all layers excluding the head 
+        # freeze all layers excluding the head
         self.det_model.requires_grad_(False)
         detect = cast(Detect, cast(object, self.det_model.model[-1]))
         detect.cv2.requires_grad_(True)
         detect.cv3.requires_grad_(True)
 
         self._rebuild_optimizer_and_criterion()
-        self._register_eigencam_hook()
 
 
     def _save(self):
@@ -351,26 +344,8 @@ class YOLOTrainer:
 
         self._sync_names()
         self._rebuild_optimizer_and_criterion()
-        self._register_eigencam_hook()
 
         print(f"[INFO] Added new class to model: {classes} -> {new_classes} classes")
-
-
-    def _register_eigencam_hook(self):
-        """
-        Registers a forward hook on the last backbone/neck layer, right
-        before the Detect head, to capture its output feature map for
-        EigenCAM. Must be re-registered whenever det_model is rebuilt.
-        """
-        if self._eigencam_hook_handle is not None:
-            self._eigencam_hook_handle.remove()
-
-        target_layer = self.det_model.model[-2]
-
-        def hook(_module, _input, output):
-            self._eigencam_activation = output[-1] if isinstance(output, (list, tuple)) else output
-
-        self._eigencam_hook_handle = target_layer.register_forward_hook(hook)
 
 
     def _predict(self):
@@ -428,26 +403,7 @@ class YOLOTrainer:
                 box_height=box_height / cfg.FRAME_HEIGHT,
             ))
 
-
-        eigencam = None
-
-        if self._eigencam_activation is not None:
-            height, width = frame.shape[:2]
-            # calculate the eigencam heatmap
-            raw_eigencam = utils.eigencam_heatmap(self._eigencam_activation, height, width)
-
-            # exponential moving average smoothing to reduce frame-to-frame jitter
-            if raw_eigencam is not None:
-                if self._eigencam_smoothed is None or self._eigencam_smoothed.shape != raw_eigencam.shape:
-                    self._eigencam_smoothed = raw_eigencam
-                else:
-                    self._eigencam_smoothed = (
-                        cfg.EIGENCAM_EMA * self._eigencam_smoothed + (1 - cfg.EIGENCAM_EMA) * raw_eigencam
-                    )
-
-            eigencam = self._eigencam_smoothed
-
-        self.predicted_frame.set(frame=frame, detections=detections, eigencam=eigencam)
+        self.predicted_frame.set(frame=frame, detections=detections)
 
 
     def start(self):
