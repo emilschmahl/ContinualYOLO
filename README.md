@@ -106,7 +106,6 @@ On quit, the model's weights, learned class list, and per-class sample buffers a
 | `LEARNING_RATE` | Optimizer learning rate for continual training              |
 | `SAMPLE_BUFFER_SIZE` | Max samples kept per class for replay during training       |
 | `SAMPLE_BATCH_SIZE` | Samples drawn per class per training step                   |
-| `CONFIDENCE_EMA` | Smoothing factors to reduce frame-to-frame jitter           |
 | `CONF_THRESHOLD` / `IOU_THRESHOLD` / `MAX_DETECTIONS` | Non-max suppression settings for prediction                 |
 
 ## Troubleshooting
